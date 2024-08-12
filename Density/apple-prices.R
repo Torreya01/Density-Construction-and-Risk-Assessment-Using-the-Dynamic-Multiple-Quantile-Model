@@ -6,275 +6,14 @@ library(ggplot2)
 library(moments)
 library(dplyr)
 library(lubridate)
+library(scales)
 library(PerformanceAnalytics)
+library(ismev)
+library(evir)
+library(evd)
+library(plotly)
+library(dplyr)
 
-######################## Time series plots for data ############################
-
-# Import data of apple share prices
-apple = read.csv("Data/apple_share_prices.csv")
-
-# Turn apple$Date into Date object
-apple$Date = as.Date(apple$Date)
-
-# Convert the cleaned Price column to numeric
-apple$Close = as.numeric(apple$Close)
-
-# Set up the date limits
-date_limits = range(apple$Date, na.rm = TRUE)
-
-# Plot the data using ggplot
-ggplot(data = apple, aes(x = Date, y = Close, group = 1)) + 
-  geom_line() +
-  labs(title = "apple Share Price - Daily Closing Prices (2014-2024)",
-       x = "Date", y = "Closing Price (USD)") +
-  theme_minimal() + 
-  scale_x_date(date_breaks = "1 year", date_labels = "%Y", limits = date_limits)
-
-# Use built-in R function to plot the time series
-original.ts = ts(apple$Close, frequency = 260, start = c(2014,7,14))
-plot(original.ts, xlab = "Time", ylab = "Close")
-
-############################### Log-returns ####################################
-
-# Make a new data column that contains the differences between each log entry
-apple$log = log(apple$Close)
-apple_diff = apple[-1, ]
-apple_diff = diff(apple$log)
-
-# Plot the time series of the log returns 
-return.ts = ts(apple_diff, frequency = 260, start = c(2014,7,14))
-plot(return.ts, xlab = "Time", ylab = "Index")
-
-############################## Density plots ###################################
-
-# Set the tau values
-vTau = seq(0.01, 0.99, length.out = 99)
-
-# Fit the data into model
-Fit_apple = EstimateDMQ(vY = apple_diff, vTau = vTau, 
-                       iTau_star = 50,  # Median as reference
-                       FixReference = TRUE,
-                       fn.optimizer = fn.solnp)
-
-# Save the fit to RDS file
-saveRDS(Fit_apple, file = "Data/Fit_apple.rds")
-
-# Read the RDS file fit
-Fit_apple = readRDS(file = "Data/Fitted_RDS/Fit_apple.rds")
-
-# Extract the quantiles from the fit and eliminate the first column
-quantiles = Fit_apple$lFilter$mQ
-quantiles = quantiles[,-1]
-apple = apple[-1,]
-
-# Select four random dates to see what the density plots look like
-selected_columns = c(300, 1300, 2000, 2516)
-mQ_days = quantiles[, selected_columns]
-
-# Select a whole month 6/5 to 7/5 and see what the density plots look like
-selected_month = c(2515, 2516)
-mQ_month = quantiles[, selected_month]
-
-# Plot the random selected density plots into a four plot column
-par(mfrow = c(4,1))
-
-for (i in 1:length(selected_columns)) {
-  # Compute optimal bandwidth using cross-validation on Maximum Likelihood
-  bw_ls = npudensbw(mQ_days[, i], ckertype = "gaussian", bwmethod = "cv.ls")
-  
-  # Perform kernel density estimation using the optimal bandwidth
-  kde_ls = npudens(mQ_days[, i], bws = bw_ls, ckertype = "gaussian")
-  
-  # Convert KDE result to data frame for plotting
-  kde_ls_frame = data.frame(Quantile = kde_ls$eval$mQ_days, Density = kde_ls$dens)
-  
-  # Plotting using ggplot2
-  plot(kde_ls_frame, type = "l", 
-       main = paste("Denity plot for apple on", apple[selected_columns[i], "Date"]))
-}
-
-# Plot a month density plots into a four plot column
-par(mfrow = c(4,1))
-
-for (i in 1:length(selected_month)) {
-  # Compute optimal bandwidth using cross-validation on Maximum Likelihood
-  bw_ls = npudensbw(mQ_month[, i], ckertype = "gaussian", bwmethod = "cv.ls")
-  
-  # Perform kernel density estimation using the optimal bandwidth
-  kde_ls = npudens(mQ_month[, i], bws = bw_ls, ckertype = "gaussian")
-  
-  # Convert KDE result to data frame for plotting
-  kde_ls_frame = data.frame(Quantile = kde_ls$eval$mQ_month, Density = kde_ls$dens)
-  
-  # Plotting using ggplot2
-  plot(kde_ls_frame, type = "l", 
-       main = paste("Denity plot for apple on", apple[selected_month[i], "Date"]))
-}
-
-################################## Forecast ####################################
-
-# One-step ahead
-Forecast_apple_1 = ForecastDMQ(Fit_apple, 1)
-
-# Twp-step ahead
-Forecast_apple_2 = ForecastDMQ(Fit_apple, 2)
-
-# Three-step ahead
-Forecast_apple_3 = ForecastDMQ(Fit_apple, 3)
-
-# Four-step ahead
-Forecast_apple_4 = ForecastDMQ(Fit_apple, 4)
-
-# Five-step ahead
-Forecast_apple_5 = ForecastDMQ(Fit_apple, 5)
-
-# 30-steps ahead
-Forecast_apple_30 = ForecastDMQ(Fit_apple, 30)
-
-########################### Forecast density plots #############################
-
-# Plot the forecast density plots
-par(mfrow = c(5,1))
-
-for (i in 1:5) {
-  # Compute optimal bandwidth using cross-validation on Maximum Likelihood
-  bw_ls = npudensbw(Forecast_apple_5[i, ], ckertype = "gaussian", bwmethod = "cv.ls")
-  
-  # Perform kernel density estimation using the optimal bandwidth
-  kde_ls = npudens(Forecast_apple_5[i, ], bws = bw_ls, ckertype = "gaussian")
-  
-  # Convert KDE result to data frame for plotting
-  kde_ls_frame = data.frame(Quantile = kde_ls$eval$Forecast_apple_5, Density = kde_ls$dens)
-  
-  # Plotting using ggplot2
-  plot(kde_ls_frame, type = "l", 
-       main = paste("Forecast denity plot for apple on", as.Date(apple$Date[nrow(apple)]) + i + 2))
-}
-
-############################# Kurtosis and skewness ############################
-
-# Generate blank kurtosis and skewness for the 5 forecasts
-kurtosis = rep(0, 5)
-skewness = rep(0, 5)
-
-# Calculate kurtosis and skewness
-for (i in 1:5) {
-  k = kurtosis(Forecast_apple_5[i, ])
-  s = skewness(Forecast_apple_5[i, ])
-  kurtosis[i] = k
-  skewness[i] = s
-}
-
-kurtosis
-skewness
-
-################# Compare the existing result with the forecast ###############
-# Load the new data set
-apple_new = read.csv("Data/apple_share_prices_new.csv")
-
-# Turn apple$Date into Date object
-apple_new$Date = as.Date(apple_new$Date)
-
-# Convert the cleaned Price column to numeric
-apple_new$Close = as.numeric(apple_new$Close)
-
-# Set up the date limits
-date_limits_new = range(apple_new$Date, na.rm = TRUE)
-
-# Plot the data using ggplot
-ggplot(data = apple_new, aes(x = Date, y = Close, group = 1)) + 
-  geom_line() +
-  labs(title = "apple Share Price - Daily Closing Prices (2014-2024)",
-       x = "Date", y = "Closing Price (USD)") +
-  theme_minimal() + 
-  scale_x_date(date_breaks = "1 year", date_labels = "%Y", limits = date_limits_new)
-
-original.ts = ts(apple$Close, frequency = 260, start = c(2014,7,14))
-plot(original.ts, xlab = "Time", ylab = "Close")
-
-############################### Log-returns ####################################
-
-# Make a new data column that contains the differences between each log entry
-apple_new$log = log(apple_new$Close)
-apple_diff_new = apple_new[-1, ]
-apple_diff_new = diff(apple_new$log)
-
-# Plot the time series of the log returns 
-return.ts = ts(apple_diff_new, frequency = 260, start = c(2014,7,14))
-plot(return.ts, xlab = "Time", ylab = "Close")
-
-# Fit the data into model
-Fit_apple_new = EstimateDMQ(vY = apple_diff_new, vTau = vTau, 
-                        iTau_star = 50,  # Median as reference
-                        FixReference = TRUE,
-                        fn.optimizer = fn.solnp)
-
-# Save the fit to RDS file
-saveRDS(Fit_apple_new, file = "Data/Fitted_RDS/Fit_apple_new.rds")
-
-# Read the RDS file fit
-Fit_apple_new = readRDS(file = "Data/Fitted_RDS/Fit_apple_new.rds")
-
-# Extract the quantiles from the fit and eliminate the first column
-quantiles_new = Fit_apple_new$lFilter$mQ
-quantiles_new = quantiles_new[,-1]
-apple_new = apple_new[-1, ]
-
-# Select the last 5 days of the data and plot density
-compare_select = c(2517, 2518, 2519, 2520, 2521)
-mQ_compare = quantiles_new[, compare_select]
-
-# Plot the random selected density plots into a four plot column
-par(mfrow = c(5,1))
-
-# Plot the actual results of the forecast results from the DMQ model
-for (i in 1:5) {
-  # Compute optimal bandwidth using cross-validation on Maximum Likelihood
-  bw_ls = npudensbw(mQ_compare[, i], ckertype = "gaussian", bwmethod = "cv.ls")
-  
-  # Perform kernel density estimation using the optimal bandwidth
-  kde_ls = npudens(mQ_compare[, i], bws = bw_ls, ckertype = "gaussian")
-  
-  # Convert KDE result to data frame for plotting
-  kde_ls_frame = data.frame(Quantile = kde_ls$eval$mQ_compare, Density = kde_ls$dens)
-  
-  # Plotting using ggplot2
-  plot(kde_ls_frame, type = "l", 
-       main = paste("Denity plot for apple on", apple_new[compare_select[i], "Date"]))
-  
-  # Compute optimal bandwidth using cross-validation on Maximum Likelihood
-  bw_ls_forecast = npudensbw(Forecast_apple_5[i, ], ckertype = "gaussian", bwmethod = "cv.ls")
-  
-  # Perform kernel density estimation using the optimal bandwidth
-  kde_ls_forecast = npudens(Forecast_apple_5[i, ], bws = bw_ls_forecast, ckertype = "gaussian")
-  
-  # Convert KDE result to data frame for plotting
-  kde_ls_frame_forecast = data.frame(Quantile = kde_ls_forecast$eval$Forecast_apple_5, Density = kde_ls_forecast$dens)
-  
-  # Plotting using ggplot2
-  lines(kde_ls_frame_forecast, type = "l", col = "blue")
-}
-
-# Calculate the MSE to evaluate the differences between forecast and reality
-MSE = function(data1, data2){
-  mse = rep(0, 5)
-  for (i in seq(1:5)){
-    bw_1 = npudensbw(data1[i, ], ckertype = "gaussian", bwmethod = "cv.ls") 
-    kde_1 = npudens(data1[i, ], bws = bw_1, ckertype = "gaussian")
-    kde_frame_1 = data.frame(Quantile = kde_1$eval$data1, Density = kde_1$dens)
-    bw_2 = npudensbw(data2[, i], ckertype = "gaussian", bwmethod = "cv.ls") 
-    kde_2 = npudens(data2[, i], bws = bw_2, ckertype = "gaussian")
-    kde_frame_2 = data.frame(Quantile = kde_2$eval$data2, Density = kde_2$dens)
-    estimated_density = kde_frame_1$Density
-    estimated_density
-    true_density = kde_frame_2$Density
-    true_density
-    mse[i] = mean((true_density - estimated_density)^2)
-  }
-  return(mse)
-}
-
-MSE(Forecast_apple_5, mQ_compare)
 
 ############################## Yearly density pot ###############################
 
@@ -302,7 +41,7 @@ for (year in 2014:2024) {
 
 # Store dataset names in a vector
 dataset_names = c("2014_6", "2014_7", "2014_8", "2014_9", "2014_10",
-                  "2014_10", "2014_11", "2014_12", "2015_1", "2015_2", 
+                  "2014_11", "2014_12", "2015_1", "2015_2", 
                   "2015_3", "2015_4", "2015_5", "2015_6", "2015_7", 
                   "2015_8", "2015_9", "2015_10", "2015_11", "2015_12",
                   "2016_1", "2016_2", "2016_3", "2016_4", "2016_5",
@@ -326,8 +65,6 @@ dataset_names = c("2014_6", "2014_7", "2014_8", "2014_9", "2014_10",
                   "2023_6", "2023_7", "2023_8", "2023_9", "2023_10", 
                   "2023_11", "2023_12", "2024_1", "2024_2", "2024_3",
                   "2024_4", "2024_5", "2024_6") 
-
-# Plot the yearly density plots
 
 # Initialize a list to store the KDE results
 kde_results = list()
@@ -363,10 +100,9 @@ kde_results = readRDS(file = "Data/Fitted_RDS/kde_result.rds")
 # Combine all KDE results into a single data frame
 kde_all = do.call(rbind, kde_results)
 
-# Define the color palette
-colors = c("1" = "black", "2" = "blue", "3" = "red", "4" = "green", 
-           "5" = "purple", "6" = "yellow", "7" = "orange", "8" = "pink", 
-           "9" = "cyan", "10" = "brown", "11" = "magenta", "12" = "turquoise")
+# Define the color palette with named colors corresponding to month names
+colors = c("black", "blue", "red", "green", "purple", "yellow", "orange", "pink", "cyan", "brown", "magenta", "turquoise")
+names(colors) = month.name  # Ensure that colors are named by month names for easy referencing
 
 # List of months to plot
 months = c("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12")
@@ -376,7 +112,7 @@ years = c("2014", "2015", "2016", "2017", "2018",
 # Loop through each month and create the plots
 for (year in years) {
   # Subset the data for the current year
-  kde_year = kde_all %>% filter(Year == year)
+  kde_year = kde_all %>% dplyr::filter(Year == year)
     # Create the plot
     p = ggplot(kde_year, aes(x = Quantile, y = Density, color = Month, group = Month)) +
       geom_line(linewidth = 1) +
@@ -390,69 +126,395 @@ for (year in years) {
     print(p)
 }
 
-kde_2019_1 = kde_all %>% filter(Year == 2019) %>% filter(Month == 1)
-kde_2019_2 = kde_all %>% filter(Year == 2019) %>% filter(Month == 2)
-kde_2019_3 = kde_all %>% filter(Year == 2019) %>% filter(Month == 3)
-kde_2019_4 = kde_all %>% filter(Year == 2019) %>% filter(Month == 4)
-kde_2019_5 = kde_all %>% filter(Year == 2019) %>% filter(Month == 5)
-kde_2019_6 = kde_all %>% filter(Year == 2019) %>% filter(Month == 6)
-kde_2019_7 = kde_all %>% filter(Year == 2019) %>% filter(Month == 7)
-kde_2019_8 = kde_all %>% filter(Year == 2019) %>% filter(Month == 8)
-kde_2019_9 = kde_all %>% filter(Year == 2019) %>% filter(Month == 9)
-kde_2019_10 = kde_all %>% filter(Year == 2019) %>% filter(Month == 10)
-kde_2019_11 = kde_all %>% filter(Year == 2019) %>% filter(Month == 11)
-kde_2019_12 = kde_all %>% filter(Year == 2019) %>% filter(Month == 12)
+
+# Prepare the data by ensuring Month and Month_num are correctly formatted
+kde_all$Month <- factor(kde_all$Month, levels = 1:12, labels = month.name)
+kde_all$Month_num <- as.numeric(kde_all$Month) 
+
+# Add the camera eye
+camera_eye <- list(x = -1, y = 2, z = 0.2) 
+
+for (year in years) {
+  # Subset the data for the current year
+  kde_year <- filter(kde_all, Year == year)
+    
+  # Initialize an empty plotly object
+  p <- plot_ly() 
+    
+  # Add each month as a separate trace
+  for (m in months) {
+    month_data <- filter(kde_year, Month_num == m)
+    p <- add_trace(p, data = month_data, x = ~Quantile, y = ~Month, z = ~Density,
+                     type = 'scatter3d', mode = 'lines',
+                     line = list(color = colors[m], width = 4),
+                     name = m, 
+                   showlegend = TRUE)  # Use month names directly for the legend
+  }
+    
+  # Layout with camera and legend configuration
+  p <- p %>% layout(#title = paste("Qauntile Density Plot in Year", year, "for Apple Inc log-returns"),
+                    scene = list(
+                      xaxis = list(title = "Quantile"),
+                      yaxis = list(title = "Month"),
+                      zaxis = list(title = "Density"), 
+                      camera = list(eye = list(x = -1, y = 2, z = 0.1))), 
+                    width = 700,  # Specify width as 1000 pixels
+                    height = 560)
+    
+  # Print the plot
+  print(p)
+  
+  # Save the plot using orca
+  plotly::orca(p, "plot.pdf")
+}
+
+# Set color palette
+colors <- RColorBrewer::brewer.pal(12, "Set3")
+
+# Set camera eye
+camera_eye <- list(x = -1.5, y = 1.5, z = 0.3) 
+
+# Assuming 'years' is a vector of years to plot
+years <- unique(kde_all$Year)
+
+# Create a 3D surface plot
+for (year in years) {
+  # Subset the data for the current year
+  kde_year <- filter(kde_all, Year == year)
+  
+  # Aggregate data to ensure unique quantile values within each month
+  kde_year <- kde_year %>%
+    group_by(Month_num, Quantile) %>%
+    summarize(Density = mean(Density), .groups = 'drop')
+  
+  # Add jitter to avoid collinearity issues
+  kde_year$Quantile <- kde_year$Quantile + rnorm(nrow(kde_year), sd = 1e-6)
+  kde_year$Month_num <- kde_year$Month_num + rnorm(nrow(kde_year), sd = 1e-6)
+  
+  # Interpolate to fill the grid
+  interp_data <- akima::interp(x = kde_year$Quantile, y = kde_year$Month_num, z = kde_year$Density,
+                               xo = quantiles, yo = months, duplicate = "mean")
+  
+  # Plot the surface
+  p <- plot_ly(
+    x = interp_data$x, 
+    y = month.name[interp_data$y], 
+    z = interp_data$z, 
+    type = "surface", 
+  )
+  
+  # Layout with camera and legend configuration
+  p <- p %>% layout(
+    title = paste("Quantile Density Plot in Year", year, "for Apple Inc log-returns"),
+    scene = list(
+      xaxis = list(title = "Quantile"),
+      yaxis = list(title = "Month"),
+      zaxis = list(title = "Density"), 
+      camera = list(eye = list(x = -1.5, y = 1.5, z = 0.3))
+    ),
+    legend = list(title = list(text = 'Months'), orientation = "v")
+  )
+  
+  print(p)
+  
+  # Use orca to save as SVG if available
+  plotly::export(p, file = "plot.svg")
+  ggsave("Density/apple_2022.pdf", plot = g)
+}
 
 
-kde_2020_1 = kde_all %>% filter(Year == 2020) %>% filter(Month == 1)
-kde_2020_2 = kde_all %>% filter(Year == 2020) %>% filter(Month == 2)
-kde_2020_3 = kde_all %>% filter(Year == 2020) %>% filter(Month == 3)
-kde_2020_4 = kde_all %>% filter(Year == 2020) %>% filter(Month == 4)
-kde_2020_5 = kde_all %>% filter(Year == 2020) %>% filter(Month == 5)
-kde_2020_6 = kde_all %>% filter(Year == 2020) %>% filter(Month == 6)
-kde_2020_7 = kde_all %>% filter(Year == 2020) %>% filter(Month == 7)
-kde_2020_8 = kde_all %>% filter(Year == 2020) %>% filter(Month == 8)
-kde_2020_9 = kde_all %>% filter(Year == 2020) %>% filter(Month == 9)
-kde_2020_10 = kde_all %>% filter(Year == 2020) %>% filter(Month == 10)
-kde_2020_11 = kde_all %>% filter(Year == 2020) %>% filter(Month == 11)
-kde_2020_12 = kde_all %>% filter(Year == 2020) %>% filter(Month == 12)
 
 plot(kde_2020_10$Quantile, kde_2020_10$Density, type = "l")
 
+# Turn the forecast results into a data frame
+Forecast_week = data.frame(quantiles = c(Forecast_apple_5))
+
 # Calculate the 95th percentile threshold
-threshold_11 = quantile(kde_2020_10$Quantile, 0.95)
+threshold_forecast = quantile(Forecast_week$quantiles, 0.95)
 
 # Select the top 5% of data values
-upper_tail_data_11 = kde_2020_10 %>% filter(kde_2020_10$Quantile > threshold_11)
+upper_tail_data_forecast = Forecast_week %>% dplyr::filter(Forecast_week$quantile > threshold_11)
 
 # Compute optimal bandwidth using cross-validation on Maximum Likelihood
-bw_ls = npudensbw(upper_tail_data_11$Quantile, ckertype = "gaussian", bwmethod = "cv.ls")
+bw_ls = npudensbw(upper_tail_data_forecast$quantile, ckertype = "gaussian", bwmethod = "cv.ls")
   
 # Perform kernel density estimation using the optimal bandwidth
-kde_ls = npudens(upper_tail_data_11$Quantile, bws = bw_ls, ckertype = "gaussian")
+kde_ls = npudens(upper_tail_data_forecast$quantile, bws = bw_ls, ckertype = "gaussian")
   
 # Convert KDE result to data frame for plotting
-kde_ls_frame = data.frame(Quantile = kde_ls$eval$upper_tail_data_1, Density = kde_ls$dens)
+kde_ls_frame = data.frame(Quantile = kde_ls$eval$upper_tail_data_forecast, Density = kde_ls$dens)
   
 # Add lines to the original density plot
 plot(kde_ls_frame$Quantile, kde_ls_frame$Density, type = "l")
 
+################################ Fit GARCH(1, 1) ###############################
+
+# Fit the data into GARCH(1,1)
+spec = ugarchspec(variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
+                   mean.model = list(armaOrder = c(0, 0), include.mean = TRUE),
+                   distribution.model = "norm")
+
+fit = ugarchfit(spec = spec, data = kde_2020_10$Quantile)
+
+# Calculate the standardised GARCH residuals
+std_resid = fit@fit$z
+
+# Plot the time series
+std.ts = ts(std_resid)
+plot(std.ts, xlab = "Time", ylab = "Value")
+
+# Write function about the indicator function
+indicator = function(x, threshold) {
+  as.numeric(x > threshold)
+}
+
+# Write function about the mean excess function
+mean_excess = function(X, v){
+  numerator = sum((X - v) * indicator(X, v))
+  denominator = sum(indicator(X, v))
+  value = numerator / denominator
+  value = ifelse(is.nan(value), 0, value)
+  value
+}
+
+# Initialise mean excess values
+en_i = rep(0, length(std_resid))
+
+# Use for loop 
+for (i in 1:length(std_resid)){
+  value = mean_excess(std_resid, std_resid[i])
+  en_i[i] = value
+}
+
+# Plot the points
+plot(std_resid, en_i,
+     ylab = "sample mean excess", xlab = "standardised residuals")
+
+############################# Extreme Value Theory #############################
+
+# Calculate the tail value at risk
+tvar = function(fit, p) {
+  scale = fit$lse[1]
+  shape = fit$lse[2]
+  threshold = fit$threshold
+  return(threshold + (scale / shape) * ((1 - p)^(-shape) - 1))
+}
+
+# Set the threshold and extract the excess values from the right tail
+right_2020_10 = quantile(kde_2020_10$Quantile, 0.95)
+right_excess_2020_10 = kde_2020_10 %>% dplyr::filter(kde_2020_10$Quantile > right_2020_10)
+
+# Fitting a GPD to the excesses
+gpd_fit_2020_10_right = gpd.fit(right_excess_2020_10$Quantile, right_2020_10)
+
+# Generate QQ plot to assess the fit
+gpd.diag(gpd_fit_2020_10_right)
+
+# Simulate data from the GPD
+simulated_data_2020_10_right = rgpd(109, loc = gpd_fit_2020_10_right$threshold, 
+                              scale = gpd_fit_2020_10_right$lse[1], 
+                              shape = gpd_fit_2020_10_right$lse[2])
+
+# Calculate the KS score
+ks.test(right_excess_2020_10$Quantile, simulated_data_2020_10_right)
+
+# Calculate TVaR at the 95th percentile
+tvar_95_right = tvar(gpd_fit_2020_10_right, 0.95)
+
+# Extract the extreme quantiles from the left tail
+left_2020_10 = quantile(kde_2020_10$Quantile, 0.05)
+left_excess_2020_10 = kde_2020_10 %>% dplyr::filter(kde_2020_10$Quantile < left_2020_10)
+
+# Fitting a GPD to the excesses
+gpd_fit_2020_10_left = gpd.fit(left_excess_2020_10$Quantile*-1, left_2020_10*-1)
+
+# Generate QQ plot to assess the fit
+gpd.diag(gpd_fit_2020_10_left)
+
+# Simulate data from the GPD
+simulated_data_2020_10_left = rgpd(109, loc = gpd_fit_2020_10_left$threshold,
+                                    scale = gpd_fit_2020_10_left$lse[1], 
+                                    shape = gpd_fit_2020_10_left$lse[2])
+
+# Calculate the KS score
+ks.test(left_excess_2020_10$Quantile*-1, simulated_data_2020_10_left)
+
+# Calculate TVaR at the 95th percentile
+tvar_95_right = tvar(gpd_fit_2020_10_left, 0.95)
+
+######################## Density plot of the whole data ########################
+
+# Sort the apple_diff to be ascending
+apple_new_sorted = sort(apple_diff)
+
+# Use the same kernel and bandwidth to draw the density of the full data
+bw_ls_full = npudensbw(apple_new_sorted, ckertype = "gaussian", bwmethod = "cv.ls")
+
+# Perform kernel density estimation using the optimal bandwidth
+kde_ls_full = npudens(apple_new_sorted, bws = bw_ls_full, ckertype = "gaussian")
+
+# Convert KDE result to data frame for plotting
+kde_ls_frame_full = data.frame(Quantile = kde_ls_full$eval$apple_new_sorted, Density = kde_ls_full$dens)
+
+# Add lines to the original density plot
+plot(kde_ls_frame_full$Quantile, kde_ls_frame_full$Density, type = "l", 
+     main = "Density plot of the whole data")
+
+########################### Recreation of the study ############################
+
+# Change data into absolute values
+abs_changes = abs(kde_2020_10$Quantile)
+
+# Define a sequence of thresholds
+thresholds = seq(from = min(kde_2020_10$Quantile), to = quantile(kde_2020_10$Quantile, 0.95), length.out = 100)
+
+# Initialize a vector to store mean excess values
+mean_excess = numeric(length(thresholds))
+
+# Calculate mean excess for each threshold
+for (i in seq_along(thresholds)) {
+  exceedances <- kde_2020_10$Quantile[kde_2020_10$Quantile > thresholds[i]] - thresholds[i]
+  if (length(exceedances) > 0) {
+    mean_excess[i] <- mean(exceedances)
+  } else {
+    mean_excess[i] <- NA  # Assign NA if no exceedances
+  }
+}
+
+# Plot the empirical mean excess function
+plot(thresholds, mean_excess,
+     xlab = "Threshold (u)", ylab = "Mean Excess (e(u))",
+     main = "Empirical Mean Excess Function")
+
+# Add threshold 
+threshold = 0
+abline(v = threshold, col = "red", lty = 2)
+legend("topright", "Threshold", lty = 2, col = "red", bty = "n")
+
 ################################### QQ plot ####################################
 
-qqnorm(kde_ls_frame$Quantile, main = "QQ Plot")
-qqline(kde_ls_frame$Quantile, col = "red")
+# Plot the qq plot of the quantiles generated
+qqnorm(kde_2020_10$Quantile, main = "QQ Plot for quantiles generated from October 2020")
+qqline(kde_2020_10$Quantile, col = "red")
+datawizard::kurtosis(kde_2020_10$Quantile)
 
-# Do the whole data qq plot
-# reference on the lecture notes about EVT/tail behaviour in finance
-# Tail bahaviour/heavy tail/ finance
+# Plot the qq plot of the quantiles generated
+qqnorm(kde_2020_12$Quantile, main = "QQ Plot for quantiles generated from December 2020")
+qqline(kde_2020_12$Quantile, col = "red")
+datawizard::kurtosis(kde_2020_12$Quantile)
 
-# student-t/ low degree of freedom/ heavy tailed
-# one-step can be Guassian and h-step ahead can be heavy-tailed
+# Plot the qq plot of the original data
+qqnorm(apple_diff, main = "QQ Plot for the original log-returns for Apple Inc.")
+qqline(apple_diff, col = "red")
+datawizard::kurtosis(apple_diff)
 
-########################### A month forecast plot ##############################
+########################### Monthly Kurtosis plot #################################
 
-# Make the a month forecasts into a whole list
-Forecast_30 = sort(as.vector(Forecast_apple_30))
+# Calculate the krutosis for each month in 2014 to 2024
+kurtosis_list = kde_all %>%
+  group_by(Year, Month_num) %>%
+  summarise(Kurtosis = kurtosis(Quantile, na.rm = TRUE) + 3) %>%
+  ungroup() 
+
+# Create a new column 'Date' for plotting
+kurtosis_list$Date = with(kurtosis_list, as.Date(paste(Year, Month_num, "1", sep = "-")))
+kurtosis_list = kurtosis_list[order(kurtosis_list$Date), ]
+
+# Plotting the kurtosis
+ggplot(kurtosis_list, aes(x = Date, y = Kurtosis)) +
+  geom_line() +  # Connect points with lines
+  geom_point() +  # Show points
+  labs(title = "Monthly Kurtosis over Time for Apple Inc",
+       x = "Date (Year)",
+       y = "Kurtosis") +
+  theme_minimal() + 
+  scale_y_continuous(limits = c(3,7)) +
+  scale_x_date(labels = date_format("%Y"), breaks = "1 year")
+
+# Print the kurtosis results
+print(kurtosis_list)
+
+################################ Skewness plot #################################
+
+# Calculate the krutosis for each month in 2014 to 2024
+skewness_list = kde_all %>%
+  group_by(Year, Month_num) %>%
+  summarise(skewness = skewness(Quantile, na.rm = TRUE)) %>%
+  ungroup() 
+
+# Create a new column 'Date' for plotting
+skewness_list$Date = with(skewness_list, as.Date(paste(Year, Month_num, "1", sep = "-")))
+skewness_list = skewness_list[order(skewness_list$Date), ]
+
+# Plotting the kurtosis
+ggplot(skewness_list, aes(x = Date, y = skewness)) +
+  geom_line() +  # Connect points with lines
+  geom_point() +  # Show points
+  labs(title = "Monthly Skewness over Time for Apple Inc.",
+       x = "Date (Year)",
+       y = "skewness") +
+  theme_minimal() + 
+  scale_y_continuous(limits = c(-1, 1.5)) +
+  scale_x_date(labels = date_format("%Y"), breaks = "1 year")
+
+
+############################ Daily Kurtosis plot ###############################
+
+# Define the months and years for the analysis
+months_years <- list(c(2020, 3), c(2017, 6), c(2017, 2), c(2022, 7), c(2022, 4), c(2022, 3))
+# Initialize a list to store the plots
+plots <- list()
+
+# Loop through each month and year
+for (my in months_years) {
+  year <- my[1]
+  month <- my[2]
+  
+  # Filter indices for the specified month and year
+  indices_name <- paste("indices", year, month, sep = "_")
+  indices <- which(format(as.Date(apple$Date), "%Y-%m") == sprintf("%04d-%02d", year, month))
+  assign(indices_name, indices)
+  
+  # Select quantiles data based on indices
+  quantiles_name <- paste("quantiles", year, month, sep = "_")
+  quantiles_selected <- quantiles[,indices]
+  assign(quantiles_name, quantiles_selected)
+  
+  # Calculate kurtosis for each column
+  kurtosis_values <- apply(quantiles_selected, 2, kurtosis)
+
+  # Select dates based on indices
+  days_in_month <- as.Date(apple$Date[indices])
+  
+  # Create a data frame for plotting
+  kurtosis_df <- data.frame(
+    Day = as.Date(format(days_in_month, "%y/%m/%d")),
+    Kurtosis = kurtosis_values + 3, 
+    Month = factor(month, levels = 1:12, labels = month.name)
+  )
+  
+  # Create the plot
+  p <- ggplot(kurtosis_df, aes(x = Day, y = Kurtosis)) +
+    geom_line() +  # Connect points with lines
+    geom_point() +  # Show points
+    labs(title = paste("Daily Kurtosis over Time for", kurtosis_df$Month, "in", year),
+         x = "Day",
+         y = "Kurtosis") +
+    theme_minimal() + 
+    scale_x_date(labels = date_format("%d"), breaks = "5 days")
+  
+  # Store the plot in the list
+  plots[[paste(year, month, sep = "_")]] <- p
+}
+
+# Display the plots
+for (plot_name in names(plots)) {
+  print(plots[[plot_name]])
+}
+
+############################ A week forecast plot ##############################
+
+# Make the a week forecasts into a whole list
 Forecast_5 = sort(as.vector(Forecast_apple_5))
 
 # Plot the forecasts into a density plot
@@ -464,13 +526,21 @@ kde_ls = npudens(Forecast_5, bws = bw_ls, ckertype = "gaussian")
 # Convert KDE result to data frame for plotting
 kde_ls_frame = data.frame(Quantile = kde_ls$eval$Forecast_5, Density = kde_ls$dens)
 
-# Add lines to the original density plot
-plot(kde_ls_frame$Quantile, kde_ls_frame$Density, type = "l")
+# Create density plot using ggplot2
+ggplot(kde_ls_frame, aes(x = Quantile, y = Density)) +
+  geom_line() +
+  labs(title = "A Week of forecast density on Apple Inc. from 24th June, 2024 to 28th June, 2024", x = "Quantile", y = "Density") +
+  theme_minimal()
 
 ################################# VaR and ES ###################################
 
-# Calculate Value at Risk (VaR)
-VaR(Forecast_5, p = 0.95, method = "historical")
+# Calculate the empirical Value at Risk 
+VaR(kde_2020_10$Quantile, p = 0.95, method = "historical")
+
+# Calculate TVaR at the 95th percentile (Use the fit of GPD)
+tvar(gpd_fit_2020_10_right, 0.95)
+
+# Try 99%
 
 # Calculate Expected Shortfall (ES)
 ES(Forecast_5, p = 0.95, method = "historical")
