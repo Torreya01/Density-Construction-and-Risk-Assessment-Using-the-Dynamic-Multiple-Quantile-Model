@@ -51,5 +51,8 @@ This directory contains all the figures used in the dissertation.
 
 - Time series: This folder contains the time series figrues for both closing prices and financial returns of Apple Inc. and FTSE 100 Index.
 - Methods: This folder contains the results from running the Kernel_simulation.R and Bandwidth_simulation.R, about what how density estiamtes would alter when choosing different kernel function and bandwidth.
-- Gaussian check: This folder 
+- Density: This folder contains the monthly density estimate figrues for Apple Inc. and FTSE 100 Index from 2014 to 2024.
+- Kurtosis and skewness: This folder contains the monthly kurtosis, variances and skewness figrues for Apple Inc. and FTSE 100 Index.
+- GPD: This folder contains QQ plots and figures showing the parameter estimates and 95% confidence interval from the Generalised Pareto Distriution.
+- Forecast: This folder contains all the figures using the forecast quantiles estimated from DMQ model, QQ plot, daily and monthly density figures.
 
